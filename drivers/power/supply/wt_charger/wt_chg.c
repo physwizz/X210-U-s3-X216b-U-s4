@@ -43,7 +43,9 @@ extern int chipone_charger_mode_status;
 
 //+ReqP86801AA2-3327, liwei19.wt, add, 20240318, iphone smart switch need 5V 0A.
 #ifdef CONFIG_QGKI_BUILD
-extern void pd_dpm_send_source_caps_0a(bool val);extern void aw_retry_source_cap(int cur);extern int is_aw35615;
+extern void pd_dpm_send_source_caps_0a(bool val);
+extern void aw_retry_source_cap(int cur);
+extern int is_aw35615;
 #endif
 //-ReqP86801AA2-3327, liwei19.wt, add, 20240318, iphone smart switch need 5V 0A.
 
@@ -3108,10 +3110,13 @@ static void wtchg_charge_strategy_machine(struct wt_chg *chg)
 	}
 #ifdef CONFIG_QGKI_BUILD
 	}else{
-//+P86801AA2-3318 When selecting to exit fast charging on the UI interface, the device cannot exit fast charging.
+//+P240514-05240, liwei19.wt 20240531, When selecting to exit fast charging on the UI interface, the device cannot exit fast charging.
+		pr_err("chg->chg_type_ibatt = FCC_1600_MA, chg_ibatt=%d\n", chg->chg_ibatt);
 		chg->chg_type_ibatt = FCC_1600_MA;
-		pr_err("chg->chg_type_ibatt = FCC_1600_MA\n");
-//-P86801AA2-3318 When selecting to exit fast charging on the UI interface, the device cannot exit fast charging.
+		if (chg->chg_type_ibatt < chg->chg_ibatt) {
+			chg->chg_ibatt = chg->chg_type_ibatt;
+		}
+//-P240514-05240, liwei19.wt 20240531,  When selecting to exit fast charging on the UI interface, the device cannot exit fast charging.
 		wtchg_set_chg_input_current(chg);
 		wtchg_set_chg_ibat_current(chg);
 	}
@@ -3386,7 +3391,8 @@ static int wtchg_battery_slate_mode_manage(struct wt_chg *chg)
 			chg->batt_slate_mode) {
 		chg->wt_discharging_state |= DISCHARGING_STATE_SLATEMODE;
 		wtchg_set_main_input_suspend(chg, true);
-		dev_err(chg->dev, "%s, stop charging\n", __func__);
+		dev_err(chg->dev, "%s, batt_slate_mode is %d, stop charging\n",
+			__func__, chg->batt_slate_mode);
 	}
 
 	return ret;
@@ -3429,7 +3435,8 @@ static int wtchg_batt_full_capacity_manage(struct wt_chg *chg)
 		if ((chg->wt_discharging_state & DISCHARGING_STATE_FULLCAPACITY) != 0) {
 			chg->wt_discharging_state &= ~DISCHARGING_STATE_FULLCAPACITY;
 			if (((chg->wt_discharging_state & DISCHARGING_BY_DISABLE) == 0)
-				&& ((chg->wt_discharging_state & DISCHARGING_STATE_SLATEMODE) ==0)) {
+				&& ((chg->wt_discharging_state & DISCHARGING_STATE_SLATEMODE) ==0)
+				&& !chg->is_wt_src_5v_0A) {
 				wtchg_set_main_input_suspend(chg, false);
 				msleep(50);
 				wtchg_set_main_chg_enable(chg, true);
@@ -3717,6 +3724,7 @@ static void wt_chg_main(struct work_struct *work)
 		wtchg_init_chg_parameter(chg);
 //+P240307-04695, liwei19.wt, add, 20240319, New requirements for one ui 6.1 charging protection.
 #ifdef CONFIG_QGKI_BUILD
+
 		if ((chg->vbus_online == 1) && ((chg->wt_discharging_state & DISCHARGING_STATE_FULLCAPACITY) != 0)) {
 			pr_err("It's 80 highsoc, checking full capacity\n");
 			wtchg_batt_full_capacity_manage(chg);
@@ -3739,6 +3747,18 @@ static void wt_chg_main(struct work_struct *work)
 		chg->wt_discharging_state &= DISCHARGING_BY_HIZ;
 #endif
 //-P240307-04695, liwei19.wt, modify, 20240319, New requirements for one ui 6.1 charging protection.
+
+//+P240625-06947, liwei19.wt, modify, 20240720, The batt_slate_mode is 2, then restoring the charging automatically after pulling out the adapter
+#ifdef CONFIG_QGKI_BUILD
+#ifdef CONFIG_COMMON_CHARGE
+		if ((chg->vbus_online != 1) && (chg->batt_slate_mode == SEC_SMART_SWITCH_SLATE)) {
+			chg->batt_slate_mode = SEC_SLATE_OFF;
+			pr_err("batt_slate_mode is 2, clear batt slate mode when plug out!\n");
+		}
+#endif
+#endif
+//-P240625-06947, liwei19.wt, modify, 20240720, The batt_slate_mode is 2, then restoring the charging automatically after pulling out the adapter
+
 		chg->rerun_adsp_count = 0;
 
 		//+chk3593, liyiying.wt, 2022/7/21, add, judge the vbat if over the cv value
@@ -4239,9 +4259,17 @@ static int wtchg_batt_set_prop(struct power_supply *psy,
 		chg->batt_slate_mode = val->intval;
 		wtchg_set_charge_work(chg);
 		//+ReqP86801AA2-3327, liwei19.wt, add, 20240318, iphone smart switch need 5V 0A.
-		if (chg->batt_slate_mode == SEC_SMART_SWITCH_SRC) {			if(is_aw35615)				aw_retry_source_cap(0);			else				pd_dpm_send_source_caps_0a(true);
+		if (chg->batt_slate_mode == SEC_SMART_SWITCH_SRC) {
+			if(is_aw35615)
+				aw_retry_source_cap(0);
+			else
+				pd_dpm_send_source_caps_0a(true);
 			pr_err("iphone smart switch\n");
-		} else if (chg->batt_slate_mode == SEC_SLATE_OFF) {			if(is_aw35615)				aw_retry_source_cap(500);			else				pd_dpm_send_source_caps_0a(false);
+		} else if (chg->batt_slate_mode == SEC_SLATE_OFF) {
+			if(is_aw35615)
+				aw_retry_source_cap(500);
+			else
+				pd_dpm_send_source_caps_0a(false);
 			pr_err("cancel iphone smart switch\n");
 		}
 		//-ReqP86801AA2-3327, liwei19.wt, add, 20240318, iphone smart switch need 5V 0A.
@@ -5484,6 +5512,34 @@ static int wtchg_iio_write_raw(struct iio_dev *indio_dev,
 		chg->pd_cur_max = val1;
 		break;
 	//- EXTBP230807-04129, xiejiaming@wt, 20230816 add, configure pd 5V/0.5A limit
+#ifdef CONFIG_COMMON_CHARGE
+	case PSY_IIO_PD_INPUT_SUSPEND:
+		pr_err("%s:rt_pd_manager input suspend, val=%d\n", __func__, val1);
+		if (val1 == 1) {
+			chg->is_wt_src_5v_0A = true;
+			wtchg_set_main_input_suspend(chg, true);
+			msleep(50);
+			wtchg_set_main_chg_enable(chg, false);
+		} else if (val1 == 2) {
+//+P240625-06947, liwei19.wt, modify, 20240720, The batt_slate_mode is 2, then restoring the charging automatically after plug out the adapter
+			if (chg->batt_slate_mode == SEC_SMART_SWITCH_SLATE) {
+				chg->batt_slate_mode = SEC_SLATE_OFF;
+				wtchg_battery_slate_mode_manage(chg);
+				pr_err("batt_slate_mode is 2, disable hiz when plug out charger!\n");
+			} else {
+				wtchg_set_main_input_suspend(chg, false);
+				pr_err("disable hiz when plug out charger!\n");
+			}
+//-P240625-06947, liwei19.wt, modify, 20240720, The batt_slate_mode is 2, then restoring the charging automatically after plug out the adapter
+		} else {
+			wtchg_set_main_input_suspend(chg, false);
+			msleep(50);
+			wtchg_set_main_chg_enable(chg, true);
+			msleep(10);
+			chg->is_wt_src_5v_0A = false;
+		}
+		break;
+#endif
 	case PSY_IIO_PD_ACTIVE:
 		chg->pd_active = val1;
 		if (chg->pd_active)
@@ -5750,6 +5806,7 @@ static int wt_chg_probe(struct platform_device *pdev)
 	//P240307-04695, liwei19.wt, add, 20240319, New requirements for one ui 6.1 charging protection.
 	wt_chg->wt_batt_cv = BATT_NORMAL_CV;
 	//+bug761884, tankaikun@wt, add 20220730, add backlight notify
+	wt_chg->is_wt_src_5v_0A = false;
 #if defined(CONFIG_FB)
 	ret = backlight_register_fb(wt_chg);
 	if (ret)

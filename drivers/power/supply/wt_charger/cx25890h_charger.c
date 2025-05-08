@@ -2268,6 +2268,10 @@ static void cx25890h_charger_irq_workfunc(struct work_struct *work)
 	if ((!prev_pg) && cx_chg->vbus_good && cx_chg->usb_online) {
 		cx25890h_get_vbus_type(cx_chg);
 
+		cx25890h_set_charge_current(cx_chg, 128);
+		cx25890h_set_input_current_limit(cx_chg, 100);
+		msleep(1000);
+
 		if (cx_chg->vbus_type == CX25890H_VBUS_USB_DCP
 				|| cx_chg->vbus_type == CX25890H_VBUS_NONSTAND_1A
 				|| cx_chg->vbus_type == CX25890H_VBUS_NONSTAND_1P5A) {

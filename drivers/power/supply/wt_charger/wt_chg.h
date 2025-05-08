@@ -3,6 +3,7 @@
 #define __LINUX_WT_CHARGER_H__
 
 #include <linux/module.h>
+#include "../../..//usb/typec/P86801_tcpc/inc/tcpci_config.h"
 
 //+bug tankaikun.wt, add, 20220806. Add charger temp control strategy
 #ifdef WT_COMPILE_FACTORY_VERSION
@@ -543,6 +544,7 @@ struct wt_chg {
 	bool shutdown_check_ok;
 	//P240228-03997,liwei19.wt,modify,2024/03/13,slove that low battery charge mode with pd TA will reboot
 	struct timespec probe_begin_time;
+	bool is_wt_src_5v_0A;
 };
 
 MODULE_LICENSE("GPL v2");

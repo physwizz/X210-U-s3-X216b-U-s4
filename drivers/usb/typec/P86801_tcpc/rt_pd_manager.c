@@ -121,6 +121,7 @@ static struct rt_pd_manager_data *g_rpmd = NULL;
 enum iio_psy_property {
 	RT1711_PD_ACTIVE = 0,
 	RT1711_PD_USB_SUSPEND_SUPPORTED,
+	RT1711_PD_INPUT_SUSPEND,
 	RT1711_PD_IN_HARD_RESET,
 	RT1711_PD_CURRENT_MAX,
 	RT1711_PD_VOLTAGE_MIN,
@@ -143,6 +144,7 @@ enum iio_psy_property {
 static const char * const iio_channel_map[] = {
 		[RT1711_PD_ACTIVE] = "pd_active",
         [RT1711_PD_USB_SUSPEND_SUPPORTED] = "pd_usb_suspend_supported",
+        [RT1711_PD_INPUT_SUSPEND] = "pd_input_suspend",
         [RT1711_PD_IN_HARD_RESET] = "pd_in_hard_reset",
         [RT1711_PD_CURRENT_MAX] = "pd_current_max",
         [RT1711_PD_VOLTAGE_MIN] = "pd_voltage_min",
@@ -688,6 +690,18 @@ static int pd_tcp_notifier_call(struct notifier_block *nb,
 			pd_sink_set_vol_and_cur(rpmd, rpmd->sink_mv_new,
 						rpmd->sink_ma_new,
 						noti->vbus_state.type);
+#ifdef CONFIG_COMMON_CHARGE
+		if ((rpmd->sink_mv_new == 5000) && (rpmd->sink_ma_new == 0)) {
+			val.intval = 1;
+		} else if ((rpmd->sink_mv_new == 0) && (rpmd->sink_ma_new == 0)) {
+			//P240625-06947, liwei19.wt, modify, 20240720, disable hiz automatically after plug out the adapter
+			//val.intval = 2;
+			break;
+		} else {
+			val.intval = 0;
+		}
+		smblib_set_prop(rpmd, RT1711_PD_INPUT_SUSPEND, &val);
+#endif
 		break;
 	case TCP_NOTIFY_SOURCE_VBUS:
 		dev_info(rpmd->dev, "%s source vbus %dmV\n",
@@ -745,7 +759,14 @@ static int pd_tcp_notifier_call(struct notifier_block *nb,
 			    old_state == TYPEC_ATTACHED_CUSTOM_SRC ||
 			    old_state == TYPEC_ATTACHED_DBGACC_SNK) &&
 			    new_state == TYPEC_UNATTACHED) {
-			//dev_info(rpmd->dev, "%s Charger plug out\n", __func__);
+			dev_info(rpmd->dev, "%s Charger plug out\n", __func__);
+//+P240625-06947, liwei19.wt, modify, 20240720, disable hiz automatically after plug out the adapter
+#ifdef CONFIG_COMMON_CHARGE
+			val.intval = 2;
+
+			smblib_set_prop(rpmd, RT1711_PD_INPUT_SUSPEND, &val);
+#endif
+//-P240625-06947, liwei19.wt, modify, 20240720, disable hiz automatically after plug out the adapter
 #ifdef CONFIG_WT_QGKI
 			dev_info(rpmd->dev, "%s:Charger plug out flag:%d,%d,%d\n", __func__, rpmd->charge_insert_flag, rpmd->otg_trigger_flag,rpmd->otg_exit_flag);
 			val.intval = TYPEC_UNATTACHED;
@@ -1076,6 +1097,18 @@ static int pd_tcp_notifier_call(struct notifier_block *nb,
 				POWER_SUPPLY_PROP_PD_USB_SUSPEND_SUPPORTED,
 					&val);
 #endif
+//+P240514-05240, liwei19.wt 20240531, When selecting to exit fast charging on the UI interface, the device cannot exit fast charging.
+#ifdef CONFIG_QGKI_BUILD
+			if (batt_hv_disable) {
+				tcpm_set_remote_power_cap(rpmd->tcpc, 5000, 2000);
+				dev_info(rpmd->dev, "%s: set pd vbus 5V, ibus 2A\n", __func__);
+			} else {
+				tcpm_set_remote_power_cap(rpmd->tcpc, 9000, 1670);
+				dev_info(rpmd->dev, "%s: set pd vbus 9V, ibus 1670\n", __func__);
+			}
+#endif
+//-P240514-05240, liwei19.wt 20240531, When selecting to exit fast charging on the UI interface, the device cannot exit fast charging.
+
 		case PD_CONNECT_PE_READY_SRC:
 		case PD_CONNECT_PE_READY_SRC_PD30:
 			/* update chg->pd_active */
@@ -1085,14 +1118,6 @@ static int pd_tcp_notifier_call(struct notifier_block *nb,
 				     POWER_SUPPLY_PD_ACTIVE;
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0))
 			smblib_set_prop(rpmd, RT1711_PD_ACTIVE, &val);
-//+P86801AA2-3318 When selecting to exit fast charging on the UI interface, the device cannot exit fast charging.
-#ifdef CONFIG_QGKI_BUILD
-			if (batt_hv_disable && (val.intval != 0)) {
-				tcpm_set_remote_power_cap(rpmd->tcpc, 5000, 2000);
-				dev_info(rpmd->dev, "%s: set pd vbus 5V, ibus 2A\n", __func__);
-			}
-#endif
-//-P86801AA2-3318 When selecting to exit fast charging on the UI interface, the device cannot exit fast charging.
 #else
 			smblib_set_prop(rpmd, POWER_SUPPLY_PROP_PD_ACTIVE,
 					&val);

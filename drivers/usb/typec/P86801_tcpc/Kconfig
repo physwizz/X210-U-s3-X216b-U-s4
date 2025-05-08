@@ -40,6 +40,14 @@ config TCPC_RT1711H
 	  TypeC port Controller
 	  Driver
 
+config COMMON_CHARGE_TEST
+        tristate "USB Common Charge Test"
+        depends on TCPC_CLASS
+        default n
+        help
+          Say Y to enable
+          Common Charge Test
+
 config USB_PD_VBUS_STABLE_TOUT
 	int "PD VBUS Stable Timeout"
 	depends on USB_POWER_DELIVERY
